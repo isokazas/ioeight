@@ -215,7 +215,7 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
         buf_append(b, "}\n");
         break;
 
-    case AST_FUNC:
+    case AST_FUNC_DEF:
         buf_printf(b, "%s %s(", c_type(stmt->return_type), stmt->name);
         for (int i = 0; i < stmt->param_count; i++) {
             Ast *p = stmt->params[i];
@@ -273,7 +273,7 @@ static void emit_expr(Buffer *b, Ast *expr) {
     case AST_IDENT:
         buf_append(b, expr->name ? expr->name : "");
         break;
-    case AST_MEMBER:
+    case AST_MEMBER_CALL:
         if (expr->left && expr->left->name) {
             buf_append(b, expr->left->name);
             buf_append(b, "_");
@@ -360,7 +360,7 @@ char *generate_c(Program *program) {
     varset_init(&main_vars);
 
     for (Ast *n = program->root->child; n; n = n->next) {
-        if (n->kind != AST_FUNC) {
+        if (n->kind != AST_FUNC_DEF) {
             collect_vars(n, &main_vars);
         }
     }
@@ -372,13 +372,13 @@ char *generate_c(Program *program) {
     if (main_vars.count > 0) buf_append(&b, "\n");
 
     for (Ast *n = program->root->child; n; n = n->next) {
-        if (n->kind == AST_FUNC) {
+        if (n->kind == AST_FUNC_DEF) {
             emit_stmt(&b, n);
         }
     }
 
     for (Ast *n = program->root->child; n; n = n->next) {
-        if (n->kind != AST_FUNC && n->kind != AST_IMPORT) {
+        if (n->kind != AST_FUNC_DEF && n->kind != AST_IMPORT) {
             emit_stmt(&b, n);
         }
     }
