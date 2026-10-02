@@ -84,19 +84,21 @@ static const char *c_type(const char *io108_type) {
     return "int";
 }
 
-static void collect_vars(Ast *node, VarSet *vs);
+static void collect_vars(Ast *node, VarSet *vs, VarSet *funcs);
 
-static void collect_vars_expr(Ast *expr, VarSet *vs) {
+static void collect_vars_expr(Ast *expr, VarSet *vs, VarSet *funcs) {
     if (!expr) return;
     if (expr->kind == AST_IDENT && expr->name) {
-        varset_add(vs, expr->name);
+        if (!varset_has(funcs, expr->name)) {
+            varset_add(vs, expr->name);
+        }
     }
-    if (expr->left) collect_vars_expr(expr->left, vs);
-    if (expr->right) collect_vars_expr(expr->right, vs);
-    if (expr->child) collect_vars_expr(expr->child, vs);
+    if (expr->left) collect_vars_expr(expr->left, vs, funcs);
+    if (expr->right) collect_vars_expr(expr->right, vs, funcs);
+    if (expr->child) collect_vars_expr(expr->child, vs, funcs);
 }
 
-static void collect_vars(Ast *node, VarSet *vs) {
+static void collect_vars(Ast *node, VarSet *vs, VarSet *funcs) {
     if (!node) return;
 
     switch (node->kind) {
@@ -104,34 +106,34 @@ static void collect_vars(Ast *node, VarSet *vs) {
         if (node->left && node->left->kind == AST_IDENT && node->left->name) {
             varset_add(vs, node->left->name);
         }
-        collect_vars_expr(node->right, vs);
+        collect_vars_expr(node->right, vs, funcs);
         break;
     case AST_FOR:
         if (node->name) varset_add(vs, node->name);
-        collect_vars_expr(node->init, vs);
-        collect_vars_expr(node->cond, vs);
-        collect_vars_expr(node->update, vs);
-        if (node->body) collect_vars(node->body, vs);
+        collect_vars_expr(node->init, vs, funcs);
+        collect_vars_expr(node->cond, vs, funcs);
+        collect_vars_expr(node->update, vs, funcs);
+        if (node->body) collect_vars(node->body, vs, funcs);
         break;
     case AST_WHILE:
-        collect_vars_expr(node->cond, vs);
-        if (node->body) collect_vars(node->body, vs);
+        collect_vars_expr(node->cond, vs, funcs);
+        if (node->body) collect_vars(node->body, vs, funcs);
         break;
     case AST_IF:
-        collect_vars_expr(node->cond, vs);
-        if (node->body) collect_vars(node->body, vs);
-        if (node->else_branch) collect_vars(node->else_branch, vs);
+        collect_vars_expr(node->cond, vs, funcs);
+        if (node->body) collect_vars(node->body, vs, funcs);
+        if (node->else_branch) collect_vars(node->else_branch, vs, funcs);
         break;
     case AST_BLOCK:
         for (Ast *n = node->child; n; n = n->next) {
-            collect_vars(n, vs);
+            collect_vars(n, vs, funcs);
         }
         break;
     case AST_EXPR_STMT:
-        collect_vars_expr(node->child, vs);
+        collect_vars_expr(node->child, vs, funcs);
         break;
     case AST_RETURN:
-        collect_vars_expr(node->child, vs);
+        collect_vars_expr(node->child, vs, funcs);
         break;
     default:
         break;
@@ -354,6 +356,14 @@ char *generate_c(Program *program) {
     buf_append(&b, "#include <stdlib.h>\n");
     buf_append(&b, "#include <string.h>\n\n");
 
+    VarSet funcs;
+    varset_init(&funcs);
+    for (Ast *n = program->root->child; n; n = n->next) {
+        if (n->kind == AST_FUNC_DEF && n->name) {
+            varset_add(&funcs, n->name);
+        }
+    }
+
     buf_append(&b, "int main(void) {\n");
 
     VarSet main_vars;
@@ -361,7 +371,7 @@ char *generate_c(Program *program) {
 
     for (Ast *n = program->root->child; n; n = n->next) {
         if (n->kind != AST_FUNC_DEF) {
-            collect_vars(n, &main_vars);
+            collect_vars(n, &main_vars, &funcs);
         }
     }
 
@@ -387,5 +397,6 @@ char *generate_c(Program *program) {
     buf_append(&b, "}\n");
 
     varset_free(&main_vars);
+    varset_free(&funcs);
     return b.buf;
 }
