@@ -1,0 +1,11 @@
+def total(n: int) -> int {
+    s = 0
+    for i (1, n) {
+        s += i
+    }
+    return s
+}
+
+n = 5
+result = total(n)
+print(result)

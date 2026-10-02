@@ -142,13 +142,13 @@ static void collect_vars(Ast *node, VarSet *vs, VarSet *funcs) {
 
 static void emit_expr(Buffer *b, Ast *expr);
 
-static void emit_stmt(Buffer *b, Ast *stmt) {
+static void emit_stmt(Buffer *b, Ast *stmt, VarSet *funcs) {
     if (!stmt) return;
 
     switch (stmt->kind) {
     case AST_BLOCK:
         for (Ast *n = stmt->child; n; n = n->next) {
-            emit_stmt(b, n);
+            emit_stmt(b, n, funcs);
         }
         break;
 
@@ -177,15 +177,15 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
         buf_append(b, "if (");
         emit_expr(b, stmt->cond);
         buf_append(b, ") {\n");
-        emit_stmt(b, stmt->body);
+        emit_stmt(b, stmt->body, funcs);
         buf_append(b, "}\n");
         if (stmt->else_branch) {
             if (stmt->else_branch->kind == AST_IF) {
                 buf_append(b, "else ");
-                emit_stmt(b, stmt->else_branch);
+                emit_stmt(b, stmt->else_branch, funcs);
             } else {
                 buf_append(b, "else {\n");
-                emit_stmt(b, stmt->else_branch);
+                emit_stmt(b, stmt->else_branch, funcs);
                 buf_append(b, "}\n");
             }
         }
@@ -195,7 +195,7 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
         buf_append(b, "while (");
         emit_expr(b, stmt->cond);
         buf_append(b, ") {\n");
-        emit_stmt(b, stmt->body);
+        emit_stmt(b, stmt->body, funcs);
         buf_append(b, "}\n");
         break;
 
@@ -213,7 +213,7 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
             buf_printf(b, "%s++", stmt->name);
         }
         buf_append(b, ") {\n");
-        emit_stmt(b, stmt->body);
+        emit_stmt(b, stmt->body, funcs);
         buf_append(b, "}\n");
         break;
 
@@ -225,7 +225,17 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
             if (i + 1 < stmt->param_count) buf_append(b, ", ");
         }
         buf_append(b, ") {\n");
-        emit_stmt(b, stmt->body);
+        
+        VarSet func_vars;
+        varset_init(&func_vars);
+        collect_vars(stmt->body, &func_vars, funcs);
+        for (int i = 0; i < func_vars.count; i++) {
+            buf_printf(b, "    int %s = 0;\n", func_vars.names[i]);
+        }
+        if (func_vars.count > 0) buf_append(b, "\n");
+        varset_free(&func_vars);
+        
+        emit_stmt(b, stmt->body, funcs);
         buf_append(b, "}\n\n");
         break;
 
@@ -383,13 +393,13 @@ char *generate_c(Program *program) {
 
     for (Ast *n = program->root->child; n; n = n->next) {
         if (n->kind == AST_FUNC_DEF) {
-            emit_stmt(&b, n);
+            emit_stmt(&b, n, &funcs);
         }
     }
 
     for (Ast *n = program->root->child; n; n = n->next) {
         if (n->kind != AST_FUNC_DEF && n->kind != AST_IMPORT) {
-            emit_stmt(&b, n);
+            emit_stmt(&b, n, &funcs);
         }
     }
 
