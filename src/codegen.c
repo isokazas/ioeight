@@ -94,48 +94,47 @@ static void collect_vars_expr(Ast *expr, VarSet *vs) {
     if (expr->left) collect_vars_expr(expr->left, vs);
     if (expr->right) collect_vars_expr(expr->right, vs);
     if (expr->child) collect_vars_expr(expr->child, vs);
-    if (expr->callee) collect_vars_expr(expr->callee, vs);
 }
 
 static void collect_vars(Ast *node, VarSet *vs) {
     if (!node) return;
 
     switch (node->kind) {
-        case AST_ASSIGN:
-            if (node->left && node->left->kind == AST_IDENT && node->left->name) {
-                varset_add(vs, node->left->name);
-            }
-            collect_vars_expr(node->right, vs);
-            break;
-        case AST_FOR:
-            if (node->name) varset_add(vs, node->name);
-            collect_vars_expr(node->init, vs);
+    case AST_ASSIGN:
+        if (node->left && node->left->kind == AST_IDENT && node->left->name) {
+            varset_add(vs, node->left->name);
+        }
+        collect_vars_expr(node->right, vs);
+        break;
+    case AST_FOR:
+        if (node->name) varset_add(vs, node->name);
+        collect_vars_expr(node->init, vs);
         collect_vars_expr(node->cond, vs);
         collect_vars_expr(node->update, vs);
         if (node->body) collect_vars(node->body, vs);
         break;
-        case AST_WHILE:
-            collect_vars_expr(node->cond, vs);
-            if (node->body) collect_vars(node->body, vs);
-            break;
-        case AST_IF:
-            collect_vars_expr(node->cond, vs);
-            if (node->body) collect_vars(node->body, vs);
-            if (node->else_branch) collect_vars(node->else_branch, vs);
-            break;
-        case AST_BLOCK:
-            for (Ast *n = node->child; n; n = n->next) {
-                collect_vars(n, vs);
-            }
-            break;
-        case AST_EXPR_STMT:
-            collect_vars_expr(node->child, vs);
-            break;
-        case AST_RETURN:
-            collect_vars_expr(node->child, vs);
-            break;
-        default:
-            break;
+    case AST_WHILE:
+        collect_vars_expr(node->cond, vs);
+        if (node->body) collect_vars(node->body, vs);
+        break;
+    case AST_IF:
+        collect_vars_expr(node->cond, vs);
+        if (node->body) collect_vars(node->body, vs);
+        if (node->else_branch) collect_vars(node->else_branch, vs);
+        break;
+    case AST_BLOCK:
+        for (Ast *n = node->child; n; n = n->next) {
+            collect_vars(n, vs);
+        }
+        break;
+    case AST_EXPR_STMT:
+        collect_vars_expr(node->child, vs);
+        break;
+    case AST_RETURN:
+        collect_vars_expr(node->child, vs);
+        break;
+    default:
+        break;
     }
 }
 
@@ -145,105 +144,105 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
     if (!stmt) return;
 
     switch (stmt->kind) {
-        case AST_BLOCK:
-            for (Ast *n = stmt->child; n; n = n->next) {
-                emit_stmt(b, n);
-            }
-            break;
-
-        case AST_EXPR_STMT:
-            emit_expr(b, stmt->child);
-            buf_append(b, ";\n");
-            break;
-
-        case AST_ASSIGN:
-            emit_expr(b, stmt->left);
-            buf_append(b, " = ");
-            emit_expr(b, stmt->right);
-            buf_append(b, ";\n");
-            break;
-
-        case AST_RETURN:
-            buf_append(b, "return");
-            if (stmt->child) {
-                buf_append(b, " ");
-                emit_expr(b, stmt->child);
-            }
-            buf_append(b, ";\n");
-            break;
-
-        case AST_IF:
-            buf_append(b, "if (");
-            emit_expr(b, stmt->cond);
-            buf_append(b, ") {\n");
-            emit_stmt(b, stmt->body);
-            buf_append(b, "}\n");
-            if (stmt->else_branch) {
-                if (stmt->else_branch->kind == AST_IF) {
-                    buf_append(b, "else ");
-                    emit_stmt(b, stmt->else_branch);
-                } else {
-                    buf_append(b, "else {\n");
-                    emit_stmt(b, stmt->else_branch);
-                    buf_append(b, "}\n");
-                }
-            }
-            break;
-
-        case AST_WHILE:
-            buf_append(b, "while (");
-            emit_expr(b, stmt->cond);
-            buf_append(b, ") {\n");
-            emit_stmt(b, stmt->body);
-            buf_append(b, "}\n");
-            break;
-
-        case AST_FOR:
-            buf_printf(b, "for (int %s = ", stmt->name);
-            emit_expr(b, stmt->init);
-            buf_append(b, "; ");
-            buf_printf(b, "%s < ", stmt->name);
-            emit_expr(b, stmt->cond);
-            buf_append(b, "; ");
-            if (stmt->update) {
-                buf_printf(b, "%s += ", stmt->name);
-                emit_expr(b, stmt->update);
-            } else {
-                buf_printf(b, "%s++", stmt->name);
-            }
-            buf_append(b, ") {\n");
-            emit_stmt(b, stmt->body);
-            buf_append(b, "}\n");
-            break;
-
-        case AST_FUNC:
-            buf_printf(b, "%s %s(", c_type(stmt->return_type), stmt->name);
-            for (int i = 0; i < stmt->param_count; i++) {
-                Ast *p = stmt->params[i];
-                buf_printf(b, "%s %s", c_type(p->return_type), p->name);
-                if (i + 1 < stmt->param_count) buf_append(b, ", ");
-            }
-            buf_append(b, ") {\n");
-            emit_stmt(b, stmt->body);
-            buf_append(b, "}\n\n");
-            break;
-
-        case AST_BREAK:
-            buf_append(b, "break;\n");
-            break;
-
-        case AST_CONTINUE:
-            buf_append(b, "continue;\n");
-            break;
-
-        case AST_IMPORT:
-            buf_append(b, "/* import ");
-            if (stmt->name) buf_append(b, stmt->name);
-            buf_append(b, " */\n");
+    case AST_BLOCK:
+        for (Ast *n = stmt->child; n; n = n->next) {
+            emit_stmt(b, n);
+        }
         break;
 
-        default:
-            break;
+    case AST_EXPR_STMT:
+        emit_expr(b, stmt->child);
+        buf_append(b, ";\n");
+        break;
+
+    case AST_ASSIGN:
+        emit_expr(b, stmt->left);
+        buf_append(b, " = ");
+        emit_expr(b, stmt->right);
+        buf_append(b, ";\n");
+        break;
+
+    case AST_RETURN:
+        buf_append(b, "return");
+        if (stmt->child) {
+            buf_append(b, " ");
+            emit_expr(b, stmt->child);
+        }
+        buf_append(b, ";\n");
+        break;
+
+    case AST_IF:
+        buf_append(b, "if (");
+        emit_expr(b, stmt->cond);
+        buf_append(b, ") {\n");
+        emit_stmt(b, stmt->body);
+        buf_append(b, "}\n");
+        if (stmt->else_branch) {
+            if (stmt->else_branch->kind == AST_IF) {
+                buf_append(b, "else ");
+                emit_stmt(b, stmt->else_branch);
+            } else {
+                buf_append(b, "else {\n");
+                emit_stmt(b, stmt->else_branch);
+                buf_append(b, "}\n");
+            }
+        }
+        break;
+
+    case AST_WHILE:
+        buf_append(b, "while (");
+        emit_expr(b, stmt->cond);
+        buf_append(b, ") {\n");
+        emit_stmt(b, stmt->body);
+        buf_append(b, "}\n");
+        break;
+
+    case AST_FOR:
+        buf_printf(b, "for (int %s = ", stmt->name);
+        emit_expr(b, stmt->init);
+        buf_append(b, "; ");
+        buf_printf(b, "%s < ", stmt->name);
+        emit_expr(b, stmt->cond);
+        buf_append(b, "; ");
+        if (stmt->update) {
+            buf_printf(b, "%s += ", stmt->name);
+            emit_expr(b, stmt->update);
+        } else {
+            buf_printf(b, "%s++", stmt->name);
+        }
+        buf_append(b, ") {\n");
+        emit_stmt(b, stmt->body);
+        buf_append(b, "}\n");
+        break;
+
+    case AST_FUNC:
+        buf_printf(b, "%s %s(", c_type(stmt->return_type), stmt->name);
+        for (int i = 0; i < stmt->param_count; i++) {
+            Ast *p = stmt->params[i];
+            buf_printf(b, "%s %s", c_type(p->return_type), p->name);
+            if (i + 1 < stmt->param_count) buf_append(b, ", ");
+        }
+        buf_append(b, ") {\n");
+        emit_stmt(b, stmt->body);
+        buf_append(b, "}\n\n");
+        break;
+
+    case AST_BREAK:
+        buf_append(b, "break;\n");
+        break;
+
+    case AST_CONTINUE:
+        buf_append(b, "continue;\n");
+        break;
+
+    case AST_IMPORT:
+        buf_append(b, "/* import ");
+        if (stmt->name) buf_append(b, stmt->name);
+        buf_append(b, " */\n");
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -251,101 +250,99 @@ static void emit_expr(Buffer *b, Ast *expr) {
     if (!expr) return;
 
     switch (expr->kind) {
-        case AST_INT:
-            buf_printf(b, "%d", expr->int_value);
-            break;
-        case AST_FLT:
-            buf_printf(b, "%g", expr->float_value);
-            break;
-        case AST_STR:
-            buf_append(b, "\"");
-            if (expr->str_value) {
-                for (int i = 0; expr->str_value[i] != '\0'; i++) {
-                    if (expr->str_value[i] == '"') buf_append(b, "\\\"");
-                    else if (expr->str_value[i] == '\\') buf_append(b, "\\\\");
-                    else buf_printf(b, "%c", expr->str_value[i]);
-                }
+    case AST_INT:
+        buf_printf(b, "%d", expr->int_value);
+        break;
+    case AST_FLT:
+        buf_printf(b, "%g", expr->float_value);
+        break;
+    case AST_STR:
+        buf_append(b, "\"");
+        if (expr->str_value) {
+            for (int i = 0; expr->str_value[i] != '\0'; i++) {
+                if (expr->str_value[i] == '"') buf_append(b, "\\\"");
+                else if (expr->str_value[i] == '\\') buf_append(b, "\\\\");
+                else buf_printf(b, "%c", expr->str_value[i]);
             }
-            buf_append(b, "\"");
-            break;
-        case AST_BOOL:
-            buf_append(b, expr->bool_value ? "1" : "0");
-            break;
-        case AST_IDENT:
-            buf_append(b, expr->name ? expr->name : "");
-            break;
-        case AST_MEMBER: {
-            if (expr->left && expr->left->name) {
-                buf_append(b, expr->left->name);
-                buf_append(b, "_");
-            }
-            buf_append(b, expr->member ? expr->member : "");
-            break;
         }
-        case AST_CALL: {
-            if (expr->callee && expr->callee->kind == AST_IDENT) {
-                const char *fname = expr->callee->name;
-                if (fname && strcmp(fname, "print") == 0) {
-                    buf_append(b, "printf(\"%d\\n\", (int)(");
-                    if (expr->arg_count > 0) emit_expr(b, expr->args[0]);
-                    buf_append(b, "))");
-                    break;
-                }
-            }
-            if (expr->callee) {
-                emit_expr(b, expr->callee);
-                buf_append(b, "(");
-                for (int i = 0; i < expr->arg_count; i++) {
-                    emit_expr(b, expr->args[i]);
-                    if (i + 1 < expr->arg_count) buf_append(b, ", ");
-                }
-                buf_append(b, ")");
-            }
-            break;
+        buf_append(b, "\"");
+        break;
+    case AST_BOOL:
+        buf_append(b, expr->bool_value ? "1" : "0");
+        break;
+    case AST_IDENT:
+        buf_append(b, expr->name ? expr->name : "");
+        break;
+    case AST_MEMBER:
+        if (expr->left && expr->left->name) {
+            buf_append(b, expr->left->name);
+            buf_append(b, "_");
         }
-        case AST_BINARY:
-            buf_append(b, "(");
+        buf_append(b, expr->member ? expr->member : "");
+        break;
+    case AST_CALL:
+        if (expr->left && expr->left->kind == AST_IDENT) {
+            const char *fname = expr->left->name;
+            if (fname && strcmp(fname, "print") == 0) {
+                buf_append(b, "printf(\"%d\\n\", (int)(");
+                if (expr->arg_count > 0) emit_expr(b, expr->args[0]);
+                buf_append(b, "))");
+                break;
+            }
+        }
+        if (expr->left) {
             emit_expr(b, expr->left);
-            buf_append(b, " ");
-            switch (expr->op) {
-                case TOK_PLUS: buf_append(b, "+"); break;
-                case TOK_MINUS: buf_append(b, "-"); break;
-                case TOK_STAR: buf_append(b, "*"); break;
-                case TOK_SLASH: buf_append(b, "/"); break;
-                case TOK_SLASH2: buf_append(b, "/"); break;
-                case TOK_PCT2: buf_append(b, "%"); break;
-                case TOK_CARET: buf_append(b, "^"); break;
-                case TOK_EQ: buf_append(b, "=="); break;
-                case TOK_NEQ: buf_append(b, "!="); break;
-                case TOK_LT: buf_append(b, "<"); break;
-                case TOK_LE: buf_append(b, "<="); break;
-                case TOK_GT: buf_append(b, ">"); break;
-                case TOK_GE: buf_append(b, ">="); break;
-                case TOK_AND: buf_append(b, "&&"); break;
-                case TOK_OR: buf_append(b, "||"); break;
-                default: buf_append(b, "?"); break;
+            buf_append(b, "(");
+            for (int i = 0; i < expr->arg_count; i++) {
+                emit_expr(b, expr->args[i]);
+                if (i + 1 < expr->arg_count) buf_append(b, ", ");
             }
-            buf_append(b, " ");
-            emit_expr(b, expr->right);
             buf_append(b, ")");
-            break;
-                case AST_UNARY:
-                    buf_append(b, "(");
-                    if (expr->op == TOK_MINUS) buf_append(b, "-");
-                    else if (expr->op == TOK_NOT) buf_append(b, "!");
-                    emit_expr(b, expr->child);
+        }
+        break;
+    case AST_BINARY_OP:
+        buf_append(b, "(");
+        emit_expr(b, expr->left);
+        buf_append(b, " ");
+        switch (expr->op) {
+        case TOK_PLUS: buf_append(b, "+"); break;
+        case TOK_MINUS: buf_append(b, "-"); break;
+        case TOK_STAR: buf_append(b, "*"); break;
+        case TOK_SLASH: buf_append(b, "/"); break;
+        case TOK_SLASH2: buf_append(b, "/"); break;
+        case TOK_PCT2: buf_append(b, "%"); break;
+        case TOK_CARET: buf_append(b, "^"); break;
+        case TOK_EQ: buf_append(b, "=="); break;
+        case TOK_NEQ: buf_append(b, "!="); break;
+        case TOK_LT: buf_append(b, "<"); break;
+        case TOK_LE: buf_append(b, "<="); break;
+        case TOK_GT: buf_append(b, ">"); break;
+        case TOK_GE: buf_append(b, ">="); break;
+        case TOK_AND: buf_append(b, "&&"); break;
+        case TOK_OR: buf_append(b, "||"); break;
+        default: buf_append(b, "?"); break;
+        }
+        buf_append(b, " ");
+        emit_expr(b, expr->right);
         buf_append(b, ")");
         break;
-                case AST_LIST:
-                    buf_append(b, "{ ");
-                    for (int i = 0; i < expr->arg_count; i++) {
-                        emit_expr(b, expr->args[i]);
-                        if (i + 1 < expr->arg_count) buf_append(b, ", ");
-                    }
-                    buf_append(b, " }");
-                    break;
-                default:
-                    break;
+    case AST_UNARY_OP:
+        buf_append(b, "(");
+        if (expr->op == TOK_MINUS) buf_append(b, "-");
+        else if (expr->op == TOK_NOT) buf_append(b, "!");
+        emit_expr(b, expr->child);
+        buf_append(b, ")");
+        break;
+    case AST_LIST:
+        buf_append(b, "{ ");
+        for (int i = 0; i < expr->arg_count; i++) {
+            emit_expr(b, expr->args[i]);
+            if (i + 1 < expr->arg_count) buf_append(b, ", ");
+        }
+        buf_append(b, " }");
+        break;
+    default:
+        break;
     }
 }
 
