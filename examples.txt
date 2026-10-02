@@ -1,0 +1,77 @@
+(* ===== LEXICAL ===== *)
+IDENT        ::= LETTER (LETTER | DIGIT | "_")*
+INT_LIT      ::= DIGIT+
+FLT_LIT      ::= DIGIT+ "." DIGIT+
+STR_LIT      ::= '"' (CHAR | ESCAPE)* '"'          (* escapes: \n \t \" \\ *)
+BOOL_LIT     ::= "true" | "false"
+LINE_COMMENT ::= "!!!" (any char except newline)*   (* skipped *)
+BLOCK_COMMENT::= "/!!" (any chars)* "!!/"           (* skipped *)
+NL           ::= newline                            (* ends a statement *)
+
+(* Reserved: if elif else while for def return break continue
+   and or not true false int flt str bool pnt input
+   addon from addevery as *)
+
+(* Lexer: newlines are ignored inside ( ) and [ ].
+   Longest match wins: "!!!" before "!=", "/!!" before "//" before "/",
+   "//=" before "//" *)
+
+(* ===== STRUCTURE ===== *)
+program      ::= NL* import_stmt* statement_list? EOF
+import_stmt  ::= addon_stmt | from_stmt
+addon_stmt   ::= "addon" IDENT ("as" IDENT)?
+from_stmt    ::= "from" IDENT "addevery"
+
+statement    ::= if_stmt | while_stmt | for_stmt | def_stmt
+               | return_stmt | "break" | "continue"
+               | assign_stmt | expr_stmt
+
+if_stmt      ::= "if" expr block
+                 (NL* "elif" expr block)*
+                 (NL* "else" block)?
+while_stmt   ::= "while" expr block
+for_stmt     ::= "for" IDENT "(" expr "," expr ("," expr)? ")" block
+                 (* start, max (exclusive), optional step (default 1) *)
+
+def_stmt     ::= "def" IDENT "(" params? ")" ("->" type)? block
+params       ::= param ("," param)*
+param        ::= IDENT ":" type
+return_stmt  ::= "return" expr?
+
+assign_stmt  ::= target assign_op expr
+target       ::= IDENT | IDENT "[" expr "]"
+assign_op    ::= "=" | "+=" | "-=" | "*=" | "/=" | "//=" | "%%=" | "^="
+expr_stmt    ::= expr
+
+type         ::= base_type ("[" "]")?
+base_type    ::= "int" | "flt" | "str" | "bool"
+
+expr         ::= or_expr
+or_expr      ::= and_expr ("or" and_expr)*
+and_expr     ::= not_expr ("and" not_expr)*
+not_expr     ::= "not" not_expr | comparison
+comparison   ::= additive (cmp_op additive)?
+cmp_op       ::= "==" | "!=" | "<" | "<=" | ">" | ">="
+additive     ::= term (("+" | "-") term)*
+term         ::= unary (("*" | "/" | "//" | "%%") unary)*
+unary        ::= "-" unary | power
+power        ::= postfix ("^" unary)?
+postfix      ::= primary ( "(" args? ")" | "[" expr "]" )*
+args         ::= expr ("," expr)*
+
+primary      ::= INT_LIT | FLT_LIT | STR_LIT | BOOL_LIT
+               | IDENT
+               | "(" expr ")"
+               | list_lit
+               | input_expr
+list_lit     ::= "[" (expr ("," expr)*)? "]"
+input_expr   ::= base_type "." "input" "(" expr? ")"
+
+(* ===== IMPORT EXAMPLES ===== *)
+addon library
+addon library2 as lb2
+from library addevery
+
+library.dosomething()
+lb2.idk()
+idktoo()
