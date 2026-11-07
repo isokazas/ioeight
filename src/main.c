@@ -55,9 +55,10 @@ static int compile_c_file(const char *c_file, const char *out_file) {
     }
 
     if (pid == 0) {
+        /* The temporary file has no .c suffix, so explicitly tell GCC its type. */
         char *const child_argv[] = {
-            "gcc", "-std=gnu99", "-O2", "-o", (char *)out_file,
-            (char *)c_file, "-lm", NULL
+            "gcc", "-std=gnu99", "-O2", "-x", "c", "-o",
+            (char *)out_file, (char *)c_file, "-lm", NULL
         };
         execvp("gcc", child_argv);
         perror("execvp gcc");
