@@ -96,6 +96,12 @@ static void varset_add_typed(VarSet *vs, const char *name, const char *type) {
     vs->count++;
 }
 
+static void varset_free(VarSet *vs) {
+    for (int i = 0; i < vs->count; i++) {
+        free(vs->vars[i].name);
+    }
+}
+
 static const char *infer_expr_type(Ast *expr) {
     if (!expr) return "int";
     if (expr->kind == AST_STR) return "char *";
@@ -138,13 +144,12 @@ static const char *c_type(const char *io108_type) {
     if (strcmp(io108_type, "bool") == 0) return "int";
     if (strcmp(io108_type, "pnt") == 0) return "void *";
     if (strcmp(io108_type, "imgint") == 0 || strcmp(io108_type, "imgflt") == 0) return "double complex";
-    if (strcmp(io108_type, "imgint *") == 0 || strcmp(io108_type, "imgflt *") == 0) return "double complex *";
+    if (strcmp(io108_type, "double complex") == 0) return "double complex";
+    if (strcmp(io108_type, "FILE *") == 0) return "FILE *";
     if (strcmp(io108_type, "int *") == 0) return "int *";
     if (strcmp(io108_type, "double *") == 0) return "double *";
     if (strcmp(io108_type, "char *") == 0) return "char *";
-    if (strcmp(io108_type, "FILE *") == 0) return "FILE *";
-    if (strcmp(io108_type, "double complex") == 0) return "double complex";
-    if (strcmp(io108_type, "double complex *") == 0) return "double complex *";
+    if (strcmp(io108_type, "void *") == 0) return "void *";
     return io108_type;
 }
 
@@ -170,9 +175,6 @@ static void collect_vars(Ast *node, VarSet *vs, VarSet *funcs) {
             if (node->left && node->left->kind == AST_IDENT && node->left->name) {
                 const char *t = infer_expr_type(node->right);
                 varset_add_typed(vs, node->left->name, t);
-            } else if (node->left && node->left->kind == AST_BINARY_OP && node->left->op == TOK_LBRACKET) {
-                collect_vars_expr(node->left->left, vs, funcs);
-                collect_vars_expr(node->left->right, vs, funcs);
             }
             collect_vars_expr(node->right, vs, funcs);
             break;
@@ -227,8 +229,7 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
 
         case AST_ASSIGN: {
             if (stmt->left && stmt->left->kind == AST_IDENT && stmt->left->is_pointer) {
-                const char *t = infer_expr_type(stmt->right);
-                buf_printf(b, "%s %s = ", c_type(t), stmt->left->name ? stmt->left->name : "");
+                buf_printf(b, "%s = ", stmt->left->name ? stmt->left->name : "");
                 emit_expr(b, stmt->right);
                 buf_append(b, ";\n");
                 break;
@@ -345,6 +346,9 @@ static void emit_stmt(Buffer *b, Ast *stmt) {
             }
             if (func_vars.count > 0) buf_append(b, "\n");
 
+            varset_free(&func_vars);
+            varset_free(&funcs_dummy);
+
             emit_stmt(b, stmt->body);
             buf_append(b, "}\n\n");
             break;
@@ -428,11 +432,11 @@ static void emit_expr(Buffer *b, Ast *expr) {
                 if (strcmp(fname, "print") == 0) {
                     if (expr->arg_count > 0 && expr->args[0] && expr->args[0]->kind == AST_CALL && expr->args[0]->left && expr->args[0]->left->kind == AST_IDENT &&
                         (strcmp(expr->args[0]->left->name, "imgint") == 0 || strcmp(expr->args[0]->left->name, "imgflt") == 0)) {
-                        buf_append(b, "printf(\"(%g%+gi)\\n\", creal((double complex)(");
+                        buf_append(b, "printf(\"(%g%+gi)\\n\", creal(");
                         emit_expr(b, expr->args[0]);
-                        buf_append(b, ")), cimag((double complex)(");
+                        buf_append(b, "), cimag(");
                         emit_expr(b, expr->args[0]);
-                        buf_append(b, "))) ");
+                        buf_append(b, "))");
                         break;
                     }
                     if (expr->arg_count > 0 && expr->args[0]->kind == AST_STR) {
@@ -446,20 +450,20 @@ static void emit_expr(Buffer *b, Ast *expr) {
                     }
                     break;
                 }
-                if (strcmp(fname, "sin") == 0) { buf_append(b, "sin("); ...; break; }
-                if (strcmp(fname, "cos") == 0) { buf_append(b, "cos("); ...; break; }
-                if (strcmp(fname, "tan") == 0) { buf_append(b, "tan("); ...; break; }
-                if (strcmp(fname, "exp") == 0) { buf_append(b, "exp("); ...; break; }
-                if (strcmp(fname, "sqrt") == 0) { buf_append(b, "sqrt("); ...; break; }
-                if (strcmp(fname, "pow") == 0) { buf_append(b, "pow("); ...; break; }
-                if (strcmp(fname, "openfile") == 0) { buf_append(b, "fopen("); ...; break; }
-                if (strcmp(fname, "closefile") == 0) { buf_append(b, "fclose("); ...; break; }
+                if (strcmp(fname, "sin") == 0) { buf_append(b, "sin("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "cos") == 0) { buf_append(b, "cos("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "tan") == 0) { buf_append(b, "tan("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "exp") == 0) { buf_append(b, "exp("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "sqrt") == 0) { buf_append(b, "sqrt("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "pow") == 0) { buf_append(b, "pow("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ", "); if (expr->arg_count > 1) emit_expr(b, expr->args[1]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "openfile") == 0) { buf_append(b, "fopen("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ", "); if (expr->arg_count > 1) emit_expr(b, expr->args[1]); buf_append(b, ")"); break; }
+                if (strcmp(fname, "closefile") == 0) { buf_append(b, "fclose("); if (expr->arg_count > 0) emit_expr(b, expr->args[0]); buf_append(b, ")"); break; }
                 if (strcmp(fname, "imgint") == 0 || strcmp(fname, "imgflt") == 0) {
-                    buf_append(b, "((double complex)((double)(");
+                    buf_append(b, "CMPLX(");
                     if (expr->arg_count > 0) emit_expr(b, expr->args[0]);
-                    buf_append(b, ") + (double)(");
+                    buf_append(b, ", ");
                     if (expr->arg_count > 1) emit_expr(b, expr->args[1]);
-                    buf_append(b, ") * I))");
+                    buf_append(b, ")");
                     break;
                 }
             }
@@ -566,13 +570,7 @@ char *generate_c(Program *program) {
     }
 
     for (int i = 0; i < main_vars.count; i++) {
-        if (strstr(main_vars.vars[i].type, "*") == NULL && strcmp(main_vars.vars[i].type, "double complex") != 0) {
-            buf_printf(&b, "    %s %s = 0;\n", c_type(main_vars.vars[i].type), main_vars.vars[i].name);
-        } else if (strcmp(main_vars.vars[i].type, "double complex") == 0) {
-            buf_printf(&b, "    %s %s = 0;\n", c_type(main_vars.vars[i].type), main_vars.vars[i].name);
-        } else {
-            buf_printf(&b, "    %s %s = NULL;\n", c_type(main_vars.vars[i].type), main_vars.vars[i].name);
-        }
+        buf_printf(&b, "    %s %s = 0;\n", c_type(main_vars.vars[i].type), main_vars.vars[i].name);
     }
 
     if (main_vars.count > 0) buf_append(&b, "\n");
@@ -591,5 +589,242 @@ char *generate_c(Program *program) {
 
     buf_append(&b, "    return 0;\n");
     buf_append(&b, "}\n");
+
+    varset_free(&main_vars);
+    varset_free(&funcs);
     return b.buf;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+n
