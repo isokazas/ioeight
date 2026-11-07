@@ -14,15 +14,33 @@ static char *read_file(const char *path) {
         return NULL;
     }
 
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fprintf(stderr, "error: cannot seek '%s'\n", path);
+        fclose(f);
+        return NULL;
+    }
     long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
+        fprintf(stderr, "error: cannot read '%s'\n", path);
+        fclose(f);
+        return NULL;
+    }
 
-    char *buf = malloc(size + 1);
-    size_t got = fread(buf, 1, size, f);
+    char *buf = malloc((size_t)size + 1);
+    if (!buf) {
+        fprintf(stderr, "error: out of memory\n");
+        fclose(f);
+        return NULL;
+    }
+    size_t got = fread(buf, 1, (size_t)size, f);
+    if (ferror(f)) {
+        fprintf(stderr, "error: failed reading '%s'\n", path);
+        free(buf);
+        fclose(f);
+        return NULL;
+    }
     buf[got] = '\0';
     fclose(f);
-
     return buf;
 }
 
@@ -32,9 +50,10 @@ static int write_file(const char *path, const char *content) {
         fprintf(stderr, "error: cannot write '%s'\n", path);
         return 0;
     }
-    fputs(content, f);
-    fclose(f);
-    return 1;
+    int ok = fputs(content, f) >= 0;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok) fprintf(stderr, "error: failed writing '%s'\n", path);
+    return ok;
 }
 
 static int compile_c_file(const char *c_file, const char *out_file) {
@@ -45,29 +64,36 @@ static int compile_c_file(const char *c_file, const char *out_file) {
     }
 
     if (pid == 0) {
-        char *argv[] = {
-            "gcc",
-            "-std=c99",
-            "-O2",
-            "-o",
-            (char *)out_file,
-            (char *)c_file,
-            "-lm",
-            NULL
+        char *const child_argv[] = {
+            "gcc", "-std=gnu99", "-O2", "-o", (char *)out_file,
+            (char *)c_file, "-lm", NULL
         };
-        execvp("gcc", argv);
-        perror("execvp");
+        execvp("gcc", child_argv);
+        perror("execvp gcc");
         _exit(127);
     }
 
-    int status = 0;
-    waitpid(pid, &status, 0);
+    int status;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        perror("waitpid");
+        return 1;
+    }
     return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
+static void cleanup(Program *prog, char *src, char *c_code) {
+    free(c_code);
+    free(src);
+    if (prog) {
+        ast_free(prog->root);
+        free(prog);
+    }
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s [--tokens] [--emit-c] -o <output> <file.108>\n", argv[0]);
+        fprintf(stderr, "usage: %s [--tokens | --emit-c] <file.108> [-o <output>]\n", argv[0]);
         return 2;
     }
 
@@ -77,22 +103,24 @@ int main(int argc, char **argv) {
     int emit_c_only = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--tokens")) {
+        if (strcmp(argv[i], "--tokens") == 0) {
             show_tokens = 1;
-        } else if (!strcmp(argv[i], "--emit-c")) {
+        } else if (strcmp(argv[i], "--emit-c") == 0) {
             emit_c_only = 1;
-        } else if (!strcmp(argv[i], "-o") || !strcmp(argv[i], "--output")) {
-            if (i + 1 >= argc) {
+        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            if (i + 1 >= argc || argv[i + 1][0] == '\0') {
                 fprintf(stderr, "error: missing output path after %s\n", argv[i]);
                 return 2;
             }
             output_file = argv[++i];
-        } else {
-            if (input_file) {
-                fprintf(stderr, "error: multiple input files: '%s' and '%s'\n", input_file, argv[i]);
-                return 2;
-            }
+        } else if (argv[i][0] == '-' && strcmp(argv[i], "-") != 0) {
+            fprintf(stderr, "error: unknown option '%s'\n", argv[i]);
+            return 2;
+        } else if (!input_file) {
             input_file = argv[i];
+        } else {
+            fprintf(stderr, "error: multiple input files: '%s' and '%s'\n", input_file, argv[i]);
+            return 2;
         }
     }
 
@@ -100,11 +128,21 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: no input file\n");
         return 2;
     }
+    if (show_tokens && emit_c_only) {
+        fprintf(stderr, "error: --tokens and --emit-c cannot be used together\n");
+        return 2;
+    }
+    if (show_tokens && output_file) {
+        fprintf(stderr, "error: -o cannot be used with --tokens\n");
+        return 2;
+    }
+    if (emit_c_only && output_file) {
+        fprintf(stderr, "error: -o cannot be used with --emit-c\n");
+        return 2;
+    }
 
     char *src = read_file(input_file);
-    if (!src) {
-        return 1;
-    }
+    if (!src) return 1;
 
     if (show_tokens) {
         Lexer lx;
@@ -131,58 +169,57 @@ int main(int argc, char **argv) {
     }
 
     char *c_code = generate_c(prog);
+    if (!c_code) {
+        fprintf(stderr, "error: failed to generate C code\n");
+        cleanup(prog, src, NULL);
+        return 1;
+    }
 
     if (emit_c_only) {
-        printf("%s", c_code);
-        free(c_code);
-        free(src);
-        ast_free(prog->root);
-        free(prog);
+        fputs(c_code, stdout);
+        cleanup(prog, src, c_code);
         return 0;
     }
 
     if (!output_file) {
         fprintf(stderr, "error: no output file specified; use -o <output>\n");
-        free(c_code);
-        free(src);
-        ast_free(prog->root);
-        free(prog);
+        cleanup(prog, src, c_code);
         return 2;
     }
 
-    char c_file[] = "/tmp/108_outXXXXXX.c";
+    /* mkstemp requires six X characters at the end of the template. */
+    char c_file[] = "/tmp/ioeight-XXXXXX";
     int fd = mkstemp(c_file);
     if (fd < 0) {
         perror("mkstemp");
-        free(c_code);
-        free(src);
-        ast_free(prog->root);
-        free(prog);
+        cleanup(prog, src, c_code);
         return 1;
     }
-    close(fd);
 
-    if (!write_file(c_file, c_code)) {
+    FILE *temp = fdopen(fd, "w");
+    if (!temp) {
+        perror("fdopen");
+        close(fd);
         unlink(c_file);
-        free(c_code);
-        free(src);
-        ast_free(prog->root);
-        free(prog);
+        cleanup(prog, src, c_code);
+        return 1;
+    }
+    int wrote_ok = fputs(c_code, temp) >= 0;
+    if (fclose(temp) != 0) wrote_ok = 0;
+    if (!wrote_ok) {
+        fprintf(stderr, "error: failed writing temporary C source\n");
+        unlink(c_file);
+        cleanup(prog, src, c_code);
         return 1;
     }
 
     int cc_rc = compile_c_file(c_file, output_file);
     unlink(c_file);
-
-    free(c_code);
-    free(src);
-    ast_free(prog->root);
-    free(prog);
+    cleanup(prog, src, c_code);
 
     if (cc_rc != 0) {
-        fprintf(stderr, "C compiler failed\n");
-        return 1;
+        fprintf(stderr, "error: C compiler failed (exit status %d)\n", cc_rc);
+        return cc_rc;
     }
-
     return 0;
 }
