@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,18 +43,6 @@ static char *read_file(const char *path) {
     buf[got] = '\0';
     fclose(f);
     return buf;
-}
-
-static int write_file(const char *path, const char *content) {
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        fprintf(stderr, "error: cannot write '%s'\n", path);
-        return 0;
-    }
-    int ok = fputs(content, f) >= 0;
-    if (fclose(f) != 0) ok = 0;
-    if (!ok) fprintf(stderr, "error: failed writing '%s'\n", path);
-    return ok;
 }
 
 static int compile_c_file(const char *c_file, const char *out_file) {
@@ -132,12 +121,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: --tokens and --emit-c cannot be used together\n");
         return 2;
     }
-    if (show_tokens && output_file) {
-        fprintf(stderr, "error: -o cannot be used with --tokens\n");
-        return 2;
-    }
-    if (emit_c_only && output_file) {
-        fprintf(stderr, "error: -o cannot be used with --emit-c\n");
+    if ((show_tokens || emit_c_only) && output_file) {
+        fprintf(stderr, "error: -o cannot be used with --tokens or --emit-c\n");
         return 2;
     }
 
