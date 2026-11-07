@@ -77,6 +77,8 @@ static const Keyword keywords[] = {
     {"str", TOK_T_STR},
     {"bool", TOK_T_BOOL},
     {"pnt", TOK_T_PNT},
+    {"imgint", TOK_T_IMGINT},
+    {"imgflt", TOK_T_IMGFLT},
     {"input", TOK_INPUT},
     {"addon", TOK_ADDON},
     {"from", TOK_FROM},
@@ -268,6 +270,8 @@ Token lexer_next(Lexer *lx) {
             TOK(MATCH('=') ? TOK_STAR_EQ : TOK_STAR);
         case '^':
             TOK(MATCH('=') ? TOK_CARET_EQ : TOK_CARET);
+        case '~':
+            TOK(TOK_TILDA);
         case '/':
             if (MATCH('/')) TOK(MATCH('=') ? TOK_SLASH2_EQ : TOK_SLASH2);
             TOK(MATCH('=') ? TOK_SLASH_EQ : TOK_SLASH);
@@ -279,6 +283,7 @@ Token lexer_next(Lexer *lx) {
         case '<':
             TOK(MATCH('=') ? TOK_LE : TOK_LT);
         case '>':
+            if (MATCH('>')) TOK(TOK_PTR);
             TOK(MATCH('=') ? TOK_GE : TOK_GT);
         case '!':
             if (MATCH('=')) TOK(TOK_NEQ);

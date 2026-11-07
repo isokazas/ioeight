@@ -12,6 +12,24 @@ typedef struct {
 } Parser;
 
 static Parser parser;
+static char *pointer_vars[256];
+static int pointer_var_count;
+
+static void pointer_var_add(const char *name) {
+    if (!name) return;
+    for (int i = 0; i < pointer_var_count; i++) {
+        if (strcmp(pointer_vars[i], name) == 0) return;
+    }
+    pointer_vars[pointer_var_count++] = strdup(name);
+}
+
+static int pointer_var_has(const char *name) {
+    if (!name) return 0;
+    for (int i = 0; i < pointer_var_count; i++) {
+        if (strcmp(pointer_vars[i], name) == 0) return 1;
+    }
+    return 0;
+}
 
 static Token peek(void) {
     if (parser.pos >= parser.count) {
@@ -38,20 +56,6 @@ static int match(TokenType type) {
     return 0;
 }
 
-static int match_any(int count, ...) {
-    va_list ap;
-    va_start(ap, count);
-    for (int i = 0; i < count; i++) {
-        if (check(va_arg(ap, TokenType))) {
-            va_end(ap);
-            advance();
-            return 1;
-        }
-    }
-    va_end(ap);
-    return 0;
-}
-
 static Token consume(TokenType type, const char *msg) {
     if (!check(type)) {
         fprintf(stderr, "Parse error at line %d: %s (expected %s, got %s)\n",
@@ -75,13 +79,17 @@ static Ast *new_ast(AstKind kind) {
 
 static void skip_newlines(void) {
     while (match(TOK_NL)) {
-        /* skip */
     }
 }
 
 static Ast *parse_expr(void);
 static Ast *parse_stmt(void);
 static Ast *parse_block(void);
+
+static int is_type_token(TokenType t) {
+    return t == TOK_T_INT || t == TOK_T_FLT || t == TOK_T_STR || t == TOK_T_BOOL ||
+           t == TOK_T_PNT || t == TOK_T_IMGINT || t == TOK_T_IMGFLT;
+}
 
 static Ast *parse_primary(void) {
     skip_newlines();
@@ -121,6 +129,13 @@ static Ast *parse_primary(void) {
         return n;
     }
 
+    if (is_type_token(peek().type)) {
+        Token t = advance();
+        Ast *n = new_ast(AST_IDENT);
+        n->name = copy_token(t);
+        return n;
+    }
+
     if (check(TOK_IDENT)) {
         Token t = advance();
         Ast *n = new_ast(AST_IDENT);
@@ -130,7 +145,7 @@ static Ast *parse_primary(void) {
 
     if (match(TOK_LPAREN)) {
         Ast *e = parse_expr();
-        consume(TOK_RPAREN, "expected ')'");
+        consume(TOK_RPAREN, "expected ')' ");
         return e;
     }
 
@@ -145,7 +160,7 @@ static Ast *parse_primary(void) {
             } while (match(TOK_COMMA));
         }
 
-        consume(TOK_RBRACKET, "expected ']'");
+        consume(TOK_RBRACKET, "expected ']' ");
         return list;
     }
 
@@ -160,7 +175,12 @@ static Ast *parse_postfix(void) {
 
     for (;;) {
         if (match(TOK_DOT)) {
-            Token member = consume(TOK_IDENT, "expected member name");
+            Token member = peek();
+            if (member.type == TOK_IDENT || member.type == TOK_INPUT) {
+                advance();
+            } else {
+                fprintf(stderr, "Parse error at line %d: expected member name\n", member.line);
+            }
             Ast *mem = new_ast(AST_MEMBER_CALL);
             mem->left = expr;
             mem->member = copy_token(member);
@@ -173,7 +193,7 @@ static Ast *parse_postfix(void) {
                         mem->args[mem->arg_count++] = parse_expr();
                     } while (match(TOK_COMMA));
                 }
-                consume(TOK_RPAREN, "expected ')'");
+                consume(TOK_RPAREN, "expected ')' ");
             }
 
             expr = mem;
@@ -189,14 +209,14 @@ static Ast *parse_postfix(void) {
                 } while (match(TOK_COMMA));
             }
 
-            consume(TOK_RPAREN, "expected ')'");
+            consume(TOK_RPAREN, "expected ')' ");
             expr = call;
         } else if (match(TOK_LBRACKET)) {
             Ast *idx = new_ast(AST_BINARY_OP);
             idx->op = TOK_LBRACKET;
             idx->left = expr;
             idx->right = parse_expr();
-            consume(TOK_RBRACKET, "expected ']'");
+            consume(TOK_RBRACKET, "expected ']' ");
             expr = idx;
         } else {
             break;
@@ -216,6 +236,12 @@ static Ast *parse_unary(void) {
     if (match(TOK_NOT)) {
         Ast *u = new_ast(AST_UNARY_OP);
         u->op = TOK_NOT;
+        u->child = parse_unary();
+        return u;
+    }
+    if (match(TOK_TILDA)) {
+        Ast *u = new_ast(AST_UNARY_OP);
+        u->op = TOK_TILDA;
         u->child = parse_unary();
         return u;
     }
@@ -354,20 +380,27 @@ static Ast *parse_import(void) {
     return NULL;
 }
 
-static Ast *parse_if(void) {
-    consume(TOK_IF, "expected 'if'");
+static Ast *parse_if_internal(int is_elif) {
+    if (!is_elif) {
+        consume(TOK_IF, "expected 'if'");
+    }
     Ast *ifstmt = new_ast(AST_IF);
     ifstmt->cond = parse_expr();
     ifstmt->body = parse_block();
 
+    skip_newlines();
+
     if (match(TOK_ELIF)) {
-        Ast *elif = parse_if();
-        ifstmt->else_branch = elif;
+        ifstmt->else_branch = parse_if_internal(1);
     } else if (match(TOK_ELSE)) {
         ifstmt->else_branch = parse_block();
     }
 
     return ifstmt;
+}
+
+static Ast *parse_if(void) {
+    return parse_if_internal(0);
 }
 
 static Ast *parse_while(void) {
@@ -394,7 +427,7 @@ static Ast *parse_for(void) {
         f->update = parse_expr();
     }
 
-    consume(TOK_RPAREN, "expected ')'");
+    consume(TOK_RPAREN, "expected ')' ");
     f->body = parse_block();
 
     return f;
@@ -414,20 +447,21 @@ static Ast *parse_funcdef(void) {
         do {
             Token pname = consume(TOK_IDENT, "expected param name");
             consume(TOK_COLON, "expected ':'");
-            Token ptype = consume(TOK_T_INT, "expected type");
-            if (peek().type == TOK_T_FLT || peek().type == TOK_T_STR ||
-                peek().type == TOK_T_BOOL || peek().type == TOK_T_PNT) {
-                ptype = advance();
-                }
+            Token ptype = peek();
+            if (is_type_token(ptype.type)) {
+                advance();
+            } else {
+                fprintf(stderr, "Parse error at line %d: expected type\n", peek().line);
+            }
 
-                Ast *param = new_ast(AST_IDENT);
+            Ast *param = new_ast(AST_IDENT);
             param->name = copy_token(pname);
             param->return_type = copy_token(ptype);
             fn->params[fn->param_count++] = param;
         } while (match(TOK_COMMA));
     }
 
-    consume(TOK_RPAREN, "expected ')'");
+    consume(TOK_RPAREN, "expected ')' ");
 
     if (match(TOK_ARROW)) {
         fn->return_type = copy_token(advance());
@@ -472,8 +506,27 @@ static Ast *parse_stmt(void) {
         return new_ast(AST_CONTINUE);
     }
 
+    if (match(TOK_PTR)) {
+        Token var = consume(TOK_IDENT, "expected pointer name");
+        consume(TOK_ASSIGN, "expected '='");
+        Ast *assign = new_ast(AST_ASSIGN);
+        assign->left = new_ast(AST_IDENT);
+        assign->left->name = copy_token(var);
+        assign->left->is_pointer = 1;
+        pointer_var_add(assign->left->name);
+        assign->right = parse_expr();
+        return assign;
+    }
+
     Ast *expr = parse_expr();
     if (!expr) return NULL;
+
+    if (expr->kind == AST_IDENT && expr->name && pointer_var_has(expr->name)) {
+        Ast *deref = new_ast(AST_UNARY_OP);
+        deref->op = TOK_STAR;
+        deref->child = expr;
+        expr = deref;
+    }
 
     if (match(TOK_ASSIGN)) {
         Ast *assign = new_ast(AST_ASSIGN);
@@ -484,10 +537,15 @@ static Ast *parse_stmt(void) {
 
     if (match(TOK_PLUS_EQ) || match(TOK_MINUS_EQ) || match(TOK_STAR_EQ) ||
         match(TOK_SLASH_EQ) || match(TOK_SLASH2_EQ) || match(TOK_PCT2_EQ) || match(TOK_CARET_EQ)) {
-        fprintf(stderr, "Compound assignments not yet supported\n");
-        }
+        TokenType op = parser.tokens[parser.pos - 1].type;
+        Ast *assign = new_ast(AST_ASSIGN);
+        assign->op = op;
+        assign->left = expr;
+        assign->right = parse_expr();
+        return assign;
+    }
 
-        Ast *stmt = new_ast(AST_EXPR_STMT);
+    Ast *stmt = new_ast(AST_EXPR_STMT);
     stmt->child = expr;
     return stmt;
 }
@@ -525,8 +583,8 @@ Program *parse(const char *src) {
 
     Token tokens[8192];
     int count = 0;
+    pointer_var_count = 0;
 
-    Token err;
     for (;;) {
         Token t = lexer_next(&lx);
         if (t.type == TOK_ERROR) {
