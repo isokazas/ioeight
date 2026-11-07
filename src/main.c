@@ -37,18 +37,42 @@ static int write_file(const char *path, const char *content) {
     return 1;
 }
 
-static int run_command(const char *cmd) {
-    int rc = system(cmd);
-    return WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
+static int compile_c_file(const char *c_file, const char *out_file) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return 1;
+    }
+
+    if (pid == 0) {
+        char *argv[] = {
+            "gcc",
+            "-std=c99",
+            "-O2",
+            "-o",
+            (char *)out_file,
+            (char *)c_file,
+            "-lm",
+            NULL
+        };
+        execvp("gcc", argv);
+        perror("execvp");
+        _exit(127);
+    }
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s [--tokens] [--emit-c] <file.108>\n", argv[0]);
+        fprintf(stderr, "usage: %s [--tokens] [--emit-c] -o <output> <file.108>\n", argv[0]);
         return 2;
     }
 
     const char *input_file = NULL;
+    const char *output_file = NULL;
     int show_tokens = 0;
     int emit_c_only = 0;
 
@@ -57,7 +81,17 @@ int main(int argc, char **argv) {
             show_tokens = 1;
         } else if (!strcmp(argv[i], "--emit-c")) {
             emit_c_only = 1;
+        } else if (!strcmp(argv[i], "-o") || !strcmp(argv[i], "--output")) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "error: missing output path after %s\n", argv[i]);
+                return 2;
+            }
+            output_file = argv[++i];
         } else {
+            if (input_file) {
+                fprintf(stderr, "error: multiple input files: '%s' and '%s'\n", input_file, argv[i]);
+                return 2;
+            }
             input_file = argv[i];
         }
     }
@@ -72,7 +106,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Token dump mode */
     if (show_tokens) {
         Lexer lx;
         lexer_init(&lx, src);
@@ -90,7 +123,6 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    /* Parse */
     Program *prog = parse(src);
     if (!prog) {
         fprintf(stderr, "parse failed\n");
@@ -98,7 +130,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Generate C */
     char *c_code = generate_c(prog);
 
     if (emit_c_only) {
@@ -110,10 +141,29 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    /* Write .c file */
-    char c_file[512];
-    snprintf(c_file, sizeof(c_file), "/tmp/108_out.c");
+    if (!output_file) {
+        fprintf(stderr, "error: no output file specified; use -o <output>\n");
+        free(c_code);
+        free(src);
+        ast_free(prog->root);
+        free(prog);
+        return 2;
+    }
+
+    char c_file[] = "/tmp/108_outXXXXXX.c";
+    int fd = mkstemp(c_file);
+    if (fd < 0) {
+        perror("mkstemp");
+        free(c_code);
+        free(src);
+        ast_free(prog->root);
+        free(prog);
+        return 1;
+    }
+    close(fd);
+
     if (!write_file(c_file, c_code)) {
+        unlink(c_file);
         free(c_code);
         free(src);
         ast_free(prog->root);
@@ -121,38 +171,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Compile with gcc */
-    char exe_file[512];
-    snprintf(exe_file, sizeof(exe_file), "/tmp/108_out");
-
-    char cc_cmd[1024];
-    snprintf(cc_cmd, sizeof(cc_cmd), "gcc -std=c99 -o %s %s 2>&1", exe_file, c_file);
-
-    fprintf(stderr, "[compile] ");
-    int cc_rc = run_command(cc_cmd);
-    if (cc_rc != 0) {
-        fprintf(stderr, "C compiler failed\n");
-        free(c_code);
-        free(src);
-        ast_free(prog->root);
-        free(prog);
-        return 1;
-    }
-
-    fprintf(stderr, "ok\n");
-
-    /* Run executable */
-    fprintf(stderr, "[run]\n");
-    run_command(exe_file);
-
-    /* Cleanup */
+    int cc_rc = compile_c_file(c_file, output_file);
     unlink(c_file);
-    unlink(exe_file);
 
     free(c_code);
     free(src);
     ast_free(prog->root);
     free(prog);
+
+    if (cc_rc != 0) {
+        fprintf(stderr, "C compiler failed\n");
+        return 1;
+    }
 
     return 0;
 }
